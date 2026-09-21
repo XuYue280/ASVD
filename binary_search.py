@@ -7,6 +7,24 @@ from tqdm import tqdm
 import time
 
 
+
+def _asvd_skip(full_name):
+    """Exclude the output head from compression.
+
+    ASVD's module walk picks up every nn.Linear, lm_head included. On opt-125m
+    lm_head is 38.6M of the 123.5M counted parameters (31%), so a nominal
+    param_ratio of 0.6 spends most of its budget on the head and the decoder is
+    cut far harder than the number suggests. ARKS and Basis_Sharing both
+    compress decoder linears only, so leaving the head alone is what makes the
+    three comparable -- and it reproduces the published ASVD numbers.
+    Set ASVD_COMPRESS_LM_HEAD=1 to restore the original behaviour.
+    """
+    import os
+    if os.environ.get("ASVD_COMPRESS_LM_HEAD", "") == "1":
+        return False
+    return "lm_head" in full_name or "embed_" in full_name
+
+
 def binary_search_truncation_rank(model, sensitivity_dict, calib_loader, args):
     module_dict = {name: module for name, module in model.named_modules()}
     full_name_dict = {module: name for name, module in model.named_modules()}
@@ -17,6 +35,8 @@ def binary_search_truncation_rank(model, sensitivity_dict, calib_loader, args):
         for name, raw_linear in submodule.named_children():
             if isinstance(raw_linear, nn.Linear):
                 full_name = full_name_dict[raw_linear]
+                if _asvd_skip(full_name):
+                    continue
 
                 linear_info[raw_linear] = {
                     "father": submodule,
@@ -126,6 +146,22 @@ def binary_search_truncation_rank(model, sensitivity_dict, calib_loader, args):
             )
             raw_linear.to("cpu")
         setattr(info["father"], info["name"], svd_linear)
+        if svd_linear is not raw_linear:
+            # `.to("cpu")` above frees VRAM but PARKS the original in host RAM,
+            # where linear_info (keyed by this very module) and module_dict keep
+            # it alive until the whole compression finishes. It accumulates over
+            # every compressed matrix: ~98 GB on opt-66b, ~103 GB on
+            # Llama-3.1-70B, against a 201 GB cgroup.
+            #
+            # Nothing reads the weight again: SVDLinear.from_linear consumes it
+            # (svd_linear.py:47 `w = linear.weight.data.float()`) and its last
+            # touch is the dtype lookup at :141, both before it returns. Release
+            # the storage but keep the module object, because linear_info is
+            # keyed on it. The BIAS is deliberately untouched -- svd_linear.py:76
+            # holds it BY REFERENCE (`bias = linear.bias.data`), so freeing it
+            # would corrupt the compressed layer.
+            raw_linear.weight.data = torch.empty(
+                0, dtype=raw_linear.weight.dtype, device="cpu")
         # print(f"decompose {info['full_name']} with ratio {param_ratio}")
     ed = time.time()
     print(f"decompose time: {ed-st}")

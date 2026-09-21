@@ -80,21 +80,60 @@ class SVDLinear(nn.Module):
         # nan or inf check
         for S in Ss:
             if (S != S).any():
-                print("nan in S")
-                return (
-                    nn.Linear(linear.in_features, linear.out_features).to(linear.weight.dtype).to(linear.weight.device)
+                # Upstream returns a FRESHLY RANDOM-INITIALISED full-rank Linear
+                # here. Its weights are finite, so shared_eval's non-finite guard
+                # does not fire: the job exits 0 having silently replaced a
+                # compressed matrix with noise, and reports a plausible-looking
+                # perplexity. That is strictly worse than crashing.
+                #
+                # The usual cause is fp16 saturation of the activation scale:
+                # act_aware_utils.py:67 accumulates `+=` over 256 samples in
+                # fp16, and opt-30b already measures a max of 20800 against
+                # fp16's 65504 -- only 3.15x of headroom. Overflow -> inf ->
+                # NaN out of svd_lowrank -> here.
+                raise RuntimeError(
+                    f"ASVD: NaN in S for a matrix of shape "
+                    f"({linear.in_features}, {linear.out_features}); refusing to "
+                    f"substitute a randomly-initialised layer. Most likely fp16 "
+                    f"overflow in the activation scale (act_aware_utils.py:67)."
                 )
         for U in Us:
             if (U != U).any():
-                print("nan in U")
-                return (
-                    nn.Linear(linear.in_features, linear.out_features).to(linear.weight.dtype).to(linear.weight.device)
+                # Upstream returns a FRESHLY RANDOM-INITIALISED full-rank Linear
+                # here. Its weights are finite, so shared_eval's non-finite guard
+                # does not fire: the job exits 0 having silently replaced a
+                # compressed matrix with noise, and reports a plausible-looking
+                # perplexity. That is strictly worse than crashing.
+                #
+                # The usual cause is fp16 saturation of the activation scale:
+                # act_aware_utils.py:67 accumulates `+=` over 256 samples in
+                # fp16, and opt-30b already measures a max of 20800 against
+                # fp16's 65504 -- only 3.15x of headroom. Overflow -> inf ->
+                # NaN out of svd_lowrank -> here.
+                raise RuntimeError(
+                    f"ASVD: NaN in U for a matrix of shape "
+                    f"({linear.in_features}, {linear.out_features}); refusing to "
+                    f"substitute a randomly-initialised layer. Most likely fp16 "
+                    f"overflow in the activation scale (act_aware_utils.py:67)."
                 )
         for V in Vs:
             if (V != V).any():
-                print("nan in V")
-                return (
-                    nn.Linear(linear.in_features, linear.out_features).to(linear.weight.dtype).to(linear.weight.device)
+                # Upstream returns a FRESHLY RANDOM-INITIALISED full-rank Linear
+                # here. Its weights are finite, so shared_eval's non-finite guard
+                # does not fire: the job exits 0 having silently replaced a
+                # compressed matrix with noise, and reports a plausible-looking
+                # perplexity. That is strictly worse than crashing.
+                #
+                # The usual cause is fp16 saturation of the activation scale:
+                # act_aware_utils.py:67 accumulates `+=` over 256 samples in
+                # fp16, and opt-30b already measures a max of 20800 against
+                # fp16's 65504 -- only 3.15x of headroom. Overflow -> inf ->
+                # NaN out of svd_lowrank -> here.
+                raise RuntimeError(
+                    f"ASVD: NaN in V for a matrix of shape "
+                    f"({linear.in_features}, {linear.out_features}); refusing to "
+                    f"substitute a randomly-initialised layer. Most likely fp16 "
+                    f"overflow in the activation scale (act_aware_utils.py:67)."
                 )
 
         assert len(Us) == len(Ss) == len(Vs) == 1

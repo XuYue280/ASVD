@@ -4,14 +4,22 @@ from tqdm import tqdm
 import os
 
 from datautils import get_eval_loaders
-from lm_eval.base import BaseLM
-from lm_eval import evaluator
+# lm_eval is only needed for the zero-shot task path; importing it at
+# module scope made the perplexity path fail too (ModuleNotFoundError).
+# from lm_eval.base import BaseLM
+# lm_eval is only needed for the zero-shot task path; importing it at
+# module scope made the perplexity path fail too (ModuleNotFoundError).
+# from lm_eval import evaluator
 from datasets import load_dataset
 import time
 import re
 
 
-class EvalLM(BaseLM):
+class EvalLM:
+    """Was `EvalLM(BaseLM)`. The perplexity path only ever reads `.model`,
+    `.device` and `.seqlen` off this object, so dropping the lm_eval base class
+    keeps that path working without the (unavailable) lm_eval dependency.
+    The zero-shot `evaluate_model(..., tasks=...)` path is not used here."""
     def __init__(
         self,
         model,

@@ -36,3 +36,11 @@ cuda/build
 *.egg-info
 *.o
 .vscode
+# --- local single-GPU runner (run_local.sh) ---
+.venv-*/
+local/runs/
+local/logs/
+# scratch copies made while patching; never meant to be committed
+*.bak
+*.orig
+*.pre_fp16

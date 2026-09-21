@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.nn as nn
+from binary_search import _asvd_skip
 from modules.svd_linear import SVDLinear
 from evaluate_utils import evaluate_model, evaluate_perplexity
 from tqdm import tqdm
@@ -24,6 +25,8 @@ def calib_sensitivity_ppl(model, calib_loader, args, use_cache=True):
         for name, raw_linear in submodule.named_children():
             if isinstance(raw_linear, nn.Linear):
                 full_name = full_name_dict[raw_linear]
+                if _asvd_skip(full_name):
+                    continue
                 linear_info[raw_linear] = {
                     "father": submodule,
                     "name": name,
@@ -36,7 +39,17 @@ def calib_sensitivity_ppl(model, calib_loader, args, use_cache=True):
     if args.compress_kv_cache:
         param_ratio_candidates = [0.1 * i for i in range(1, 20)]
     else:
-        param_ratio_candidates = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        # Upstream grid, restored. It floors the whole-model ratio at 0.4, so
+        # a target below that cannot be met -- binary_search only ever picks
+        # from this list and will silently settle at 0.4. Set
+        # ASVD_EXTEND_GRID=1 to add 0.2/0.3 when a lower target is wanted;
+        # note that doing so changes the per-matrix allocation at every target,
+        # not just the low ones, so reference numbers will not reproduce.
+        import os as _os
+        if _os.environ.get("ASVD_EXTEND_GRID", "") == "1":
+            param_ratio_candidates = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+        else:
+            param_ratio_candidates = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     input_ids = torch.cat([_["input_ids"] for _ in calib_loader], 0)
     print(f"input_ids.shape={input_ids.shape}")
     pbar = tqdm(total=len(linear_info) * len(param_ratio_candidates))
@@ -78,6 +91,8 @@ def calib_sensitivity_stable_rank(model, calib_loader, args, use_cache=True):
         for name, raw_linear in submodule.named_children():
             if isinstance(raw_linear, nn.Linear):
                 full_name = full_name_dict[raw_linear]
+                if _asvd_skip(full_name):
+                    continue
                 linear_info[raw_linear] = {
                     "father": submodule,
                     "name": name,
