@@ -1,0 +1,4 @@
+method,model,rho,dense,corpus,ppl,ppl_tokens,realised_linear_ratio,realised_total_ratio,achieved_target_ratio,compress_seconds,source
+asvd,facebook/opt-125m,0.6,False,c4,295.21789990010234,524032,0.7243634374378357,0.7280955651491365,0.5990668402777778,386.1909908870002,/home/xuy280/Desktop/ICLR submission for ARKS/3 baseline/rehearsal/ASVD/local/runs/asvd/opt-125m_rho60.json
+asvd,facebook/opt-125m,0.6,False,ptb,519.8993914021773,96209,0.7243634374378357,0.7280955651491365,0.5990668402777778,386.1909908870002,/home/xuy280/Desktop/ICLR submission for ARKS/3 baseline/rehearsal/ASVD/local/runs/asvd/opt-125m_rho60.json
+asvd,facebook/opt-125m,0.6,False,wikitext2,290.79193102478155,286580,0.7243634374378357,0.7280955651491365,0.5990668402777778,386.1909908870002,/home/xuy280/Desktop/ICLR submission for ARKS/3 baseline/rehearsal/ASVD/local/runs/asvd/opt-125m_rho60.json

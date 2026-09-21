@@ -1,0 +1,34 @@
+{
+  "method": "asvd",
+  "model": "facebook/opt-125m",
+  "rho_target": 0.6,
+  "dense": false,
+  "seed": 42,
+  "calib_dataset": "wikitext2",
+  "n_calib_samples": 32,
+  "act_calib_samples": 256,
+  "params_before": {
+    "total_params": 125239296,
+    "linear_params": 123543552
+  },
+  "params_after": {
+    "total_params": 91186176,
+    "linear_params": 89490432
+  },
+  "target_matrices": 72,
+  "kept_dense": 7,
+  "achieved_target_ratio": 0.5990668402777778,
+  "realised_total_ratio": 0.7280955651491365,
+  "realised_linear_ratio": 0.7243634374378357,
+  "compress_seconds": 386.1909908870002,
+  "ppl": {
+    "wikitext2": 290.79193102478155,
+    "ptb": 519.8993914021773,
+    "c4": 295.21789990010234
+  },
+  "ppl_tokens": {
+    "wikitext2": 286580,
+    "ptb": 96209,
+    "c4": 524032
+  }
+}
