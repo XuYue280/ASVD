@@ -19,6 +19,9 @@ sys.path.insert(0, _REPO)
 sys.path.insert(0, _HERE)
 
 from shared_eval import evaluate_all, count_parameters
+# Timing + peak-memory probes, defined identically to the ARKS instrumentation
+# so the two sides are comparable. Measurement only; see telemetry.py.
+from telemetry import Phase, environment, rollup
 
 
 class _Shield(torch.nn.Module):
@@ -56,10 +59,13 @@ def main():
     tok = AutoTokenizer.from_pretrained(a.model, use_fast=False, trust_remote_code=True)
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
-        a.model, device_map="auto", torch_dtype=torch.float16, trust_remote_code=True
-    )
+    _total = Phase("total"); _total.__enter__()
+    with Phase("model_load") as _load:
+        model = AutoModelForCausalLM.from_pretrained(
+            a.model, device_map="auto", torch_dtype=torch.float16, trust_remote_code=True
+        )
     before = count_parameters(model)
+    _compress = Phase("compress"); _compress.__enter__()
     t0 = time.perf_counter()
 
     if not a.dense:
@@ -108,6 +114,7 @@ def main():
         binary_search_truncation_rank(model, sensitivity, calib, args)
 
     compress_s = time.perf_counter() - t0
+    _compress.__exit__(None, None, None)
     after = count_parameters(model)
 
     # Recipe cross-checks: the whole-model achieved ratio over the 72 target
@@ -133,7 +140,9 @@ def main():
     print(f"[check] target matrices={n_target}  kept fully dense={dense_kept}  "
           f"achieved ratio={achieved:.4f}" if achieved else "[check] n/a", flush=True)
 
-    res = evaluate_all(model, tok, device="cuda")
+    with Phase("eval") as _eval:
+        res = evaluate_all(model, tok, device="cuda")
+    _total.__exit__(None, None, None)
 
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
     payload = {
@@ -150,6 +159,18 @@ def main():
         "compress_seconds": compress_s,
         "ppl": {c: v["ppl"] for c, v in res.items()},
         "ppl_tokens": {c: v["ppl_tokens"] for c, v in res.items()},
+        # Cost. `compress_seconds` above is kept for continuity with the runs
+        # made before this instrumentation existed; `compress_seconds` inside
+        # `telemetry` is the same number measured by the probe.
+        # rollup, not _total.fields(): every nested phase resets the global CUDA
+        # peak counter, so the enclosing phase can only see the last child's
+        # peak. See telemetry.rollup.
+        "telemetry": {**_load.fields(), **_compress.fields(), **_eval.fields(),
+                      **rollup(_total, (_load, _compress, _eval))},
+        "per_corpus_cost": {c: {k: v for k, v in d.items()
+                                if k not in ("ppl", "ppl_tokens")}
+                            for c, d in res.items()},
+        "environment": environment(),
     }
     with open(a.out, "w") as fh:
         json.dump(payload, fh, indent=2)

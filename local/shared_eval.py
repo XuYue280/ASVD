@@ -21,6 +21,10 @@ final1/bench_inference_minibatch_vq.py (test_loader / perplexity).
 Reference, facebook/opt-125m dense fp16 seqlen 2048:
     wikitext2 27.65    ptb 38.99    c4 26.56
 """
+# VENDORED COPY -- do not edit here.
+# Source of truth: baselines/tools/shared_eval.py in the ARKS comparison
+# harness. Copied verbatim except for the LOCAL_FILES block below, which
+# was made environment-overridable so the file is portable off Trillium.
 from __future__ import annotations
 
 import json
@@ -297,17 +301,32 @@ def evaluate_all(model, tokenizer, device="cuda", corpora=("wikitext2", "ptb", "
             f"first: {bad[:3]}. The compression produced an unusable model; "
             f"refusing to emit perplexities."
         )
+    # Per-corpus cost. telemetry.Phase is measurement only -- it resets a CUDA
+    # counter and samples /proc, touching no weight and no random stream -- so an
+    # instrumented run reproduces an uninstrumented one exactly. Import failure
+    # is not fatal: the perplexities are the deliverable, the timings are not.
+    try:
+        from telemetry import Phase as _Phase
+    except Exception:
+        _Phase = None
     for corpus in corpora:
         ids = build_text(corpus, tokenizer)
         cap = RECIPES[corpus][7]
-        ppl, ntok = perplexity(model, ids, device, tokenizer.pad_token_id, cap, batch_size)
+        _probe = _Phase(f"eval_{corpus}") if _Phase is not None else None
+        if _probe is None:
+            ppl, ntok = perplexity(model, ids, device, tokenizer.pad_token_id, cap, batch_size)
+        else:
+            with _probe:
+                ppl, ntok = perplexity(model, ids, device, tokenizer.pad_token_id, cap, batch_size)
         if not math.isfinite(ppl):
             raise RuntimeError(
                 f"{corpus} perplexity is {ppl} with finite weights -- evaluation "
                 f"itself diverged; refusing to emit it."
             )
         out[corpus] = {"ppl": ppl, "ppl_tokens": ntok}
-        print(f"[eval] {corpus:<10} ppl={ppl:.4f} tokens={ntok}", flush=True)
+        out[corpus].update(_probe.fields() if _probe is not None else {})
+        print(f"[eval] {corpus:<10} ppl={ppl:.4f} tokens={ntok}"
+              + (f" secs={_probe.seconds:.1f}" if _probe is not None else ""), flush=True)
     return out
 
 

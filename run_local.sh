@@ -229,6 +229,16 @@ for f in sorted(glob.glob(os.path.join(root, "*.json"))):
             "realised_linear_ratio": d.get("realised_linear_ratio"),
             "realised_total_ratio": d.get("realised_total_ratio"),
             "achieved_target_ratio": d.get("achieved_target_ratio"),
+            "model_load_seconds": (d.get("telemetry") or {}).get("model_load_seconds"),
+            "eval_seconds": (d.get("telemetry") or {}).get("eval_seconds"),
+            "total_seconds": (d.get("telemetry") or {}).get("total_seconds"),
+            "peak_cuda_allocated_mb": (d.get("telemetry") or {}).get("total_peak_cuda_allocated_mb"),
+            "peak_cuda_reserved_mb": (d.get("telemetry") or {}).get("total_peak_cuda_reserved_mb"),
+            "compress_peak_cuda_allocated_mb": (d.get("telemetry") or {}).get("compress_peak_cuda_allocated_mb"),
+            "eval_peak_cuda_allocated_mb": (d.get("telemetry") or {}).get("eval_peak_cuda_allocated_mb"),
+            "peak_cpu_rss_mb": (d.get("telemetry") or {}).get("total_peak_cpu_rss_mb"),
+            "gpu_name": ((d.get("environment") or {}).get("gpu_names") or [None])[0],
+            "gpu_count": (d.get("environment") or {}).get("gpu_count"),
             "compress_seconds": d.get("compress_seconds"), "source": f,
         })
 if not rows:
