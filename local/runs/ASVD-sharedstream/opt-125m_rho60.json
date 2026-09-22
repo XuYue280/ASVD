@@ -12,19 +12,19 @@
     "linear_params": 123543552
   },
   "params_after": {
-    "total_params": 91020288,
-    "linear_params": 89324544
+    "total_params": 91191552,
+    "linear_params": 89495808
   },
   "target_matrices": 72,
   "kept_dense": 7,
-  "achieved_target_ratio": 0.5971137152777778,
-  "realised_total_ratio": 0.7267709968602826,
-  "realised_linear_ratio": 0.7230206882832704,
-  "compress_seconds": 1.143278977018781,
+  "achieved_target_ratio": 0.5991301359953703,
+  "realised_total_ratio": 0.7281384909733124,
+  "realised_linear_ratio": 0.7244069524567336,
+  "compress_seconds": 369.388271776028,
   "ppl": {
-    "wikitext2": 351.2547064808876,
-    "ptb": 641.3092113896336,
-    "c4": 309.3644492512718
+    "wikitext2": 307.0342525785944,
+    "ptb": 587.5935727100601,
+    "c4": 314.8797141039523
   },
   "ppl_tokens": {
     "wikitext2": 286580,

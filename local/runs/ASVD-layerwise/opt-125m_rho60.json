@@ -20,7 +20,7 @@
   "achieved_target_ratio": 0.5971137152777778,
   "realised_total_ratio": 0.7267709968602826,
   "realised_linear_ratio": 0.7230206882832704,
-  "compress_seconds": 1.143278977018781,
+  "compress_seconds": 1.1403767550364137,
   "ppl": {
     "wikitext2": 351.2547064808876,
     "ptb": 641.3092113896336,

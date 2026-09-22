@@ -1,7 +1,7 @@
 {
   "method": "asvd",
   "model": "facebook/opt-125m",
-  "rho_target": 0.6,
+  "rho_target": 0.33,
   "dense": false,
   "seed": 42,
   "calib_dataset": "wikitext2",
@@ -12,19 +12,19 @@
     "linear_params": 123543552
   },
   "params_after": {
-    "total_params": 91020288,
-    "linear_params": 89324544
+    "total_params": 68272128,
+    "linear_params": 66576384
   },
   "target_matrices": 72,
-  "kept_dense": 7,
-  "achieved_target_ratio": 0.5971137152777778,
-  "realised_total_ratio": 0.7267709968602826,
-  "realised_linear_ratio": 0.7230206882832704,
-  "compress_seconds": 1.143278977018781,
+  "kept_dense": 1,
+  "achieved_target_ratio": 0.3292824074074074,
+  "realised_total_ratio": 0.5451334379905809,
+  "realised_linear_ratio": 0.5388899940322259,
+  "compress_seconds": 473.25426727801096,
   "ppl": {
-    "wikitext2": 351.2547064808876,
-    "ptb": 641.3092113896336,
-    "c4": 309.3644492512718
+    "wikitext2": 3202.2310301485622,
+    "ptb": 4596.913369839238,
+    "c4": 2854.78191684843
   },
   "ppl_tokens": {
     "wikitext2": 286580,
