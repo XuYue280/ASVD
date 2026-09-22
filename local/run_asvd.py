@@ -12,6 +12,7 @@ perplexity comes from tools/shared_eval.py, the same code every baseline uses.
 import argparse, json, os, random, sys, time
 import numpy as np
 import torch
+import torch.nn as nn
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)          # <checkout>/local/..  ->  <checkout>
@@ -67,6 +68,7 @@ def main():
         from act_aware_utils import calib_input_distribution
         from sensitivity import calib_sensitivity_ppl, calib_sensitivity_stable_rank
         from binary_search import binary_search_truncation_rank
+        from modules.svd_linear import SVDLinear
 
         args = argparse.Namespace(
             model_id=a.model, ppl_target=-1, param_ratio_target=a.rho,
@@ -96,16 +98,71 @@ def main():
         # stopped. ASVD_SHARED_STREAM=1 keeps the sequential behaviour.
         act_calib = get_calib_data(a.calib_dataset, tok, a.model,
                                    a.act_calib_samples, seed=a.seed)
-        calib_input_distribution(model, act_calib, args.scaling_method, use_cache=False)
+        # ASVD_REF_CACHE=1 loads the activation-scaling vector from cache/ instead of
+        # recomputing it. The reference run (ARKS_Baseline/ASVD/asvd_bench) did exactly
+        # this -- svd_module.py:425 passes use_cache=True -- and its cached vector was
+        # built from EIGHT sequences, not the 256 this script otherwise uses. Since
+        # act_aware_utils.py:67 accumulates with += and never divides by the batch
+        # count, the two vectors differ by ~256/8=32x globally AND are not proportional
+        # element-wise, so the SVD is weighted differently. Set this only to reproduce
+        # the reference; leave it unset for new work.
+        _use_ref_cache = os.environ.get("ASVD_REF_CACHE", "") == "1"
+        calib_input_distribution(model, act_calib, args.scaling_method,
+                                 use_cache=_use_ref_cache)
         if os.environ.get("ASVD_SHARED_STREAM", "") != "1":
             random.seed(a.seed); np.random.seed(a.seed); torch.manual_seed(a.seed)
         calib = get_calib_data(a.calib_dataset, tok, a.model, a.n_calib_samples, seed=a.seed)
         # binary_search_truncation_rank iterates sensitivity_dict (binary_search.py:34)
         # and cannot take None -- the per-layer sensitivity sweep has to run first.
-        _sens_fn = (calib_sensitivity_stable_rank
-                    if a.sensitivity_metric == "stable_rank" else calib_sensitivity_ppl)
-        sensitivity = _sens_fn(model, calib, args, use_cache=False)
-        binary_search_truncation_rank(model, sensitivity, calib, args)
+        _plan = os.environ.get("ASVD_RANK_PLAN", "")
+        if _plan:
+            # Reproduce a REFERENCE run's rank allocation instead of searching for one.
+            #
+            # Why this exists: the reference numbers came from ARKS_Baseline/ASVD/
+            # asvd_bench, whose sensitivity table was built from different inputs and
+            # has since been overwritten, so the allocation cannot be re-derived. But
+            # the allocation itself is recorded per-matrix in the reference JSON, and
+            # the reference run SKIPPED the sweep (its sensitivity_time_seconds is
+            # 0.0034 -- a cache hit). Replaying the plan without the sweep therefore
+            # matches both the allocation AND the RNG stream position that
+            # torch.svd_lowrank consumes, which a re-derived allocation cannot.
+            #
+            # Traversal order is named_modules (layer 0 -> 11), matching asvd_bench's
+            # get_target_linear_specs -- NOT the upstream stack-DFS that starts at
+            # layer 11 -- because each svd_lowrank call advances the global generator.
+            import json as _json
+            with open(_plan) as _fh:
+                _ref = _json.load(_fh)
+            _ratio_of = {m["name"]: m["requested_compression_ratio"]
+                         for m in _ref["per_matrix"]}
+            print(f"[rank-plan] {_plan}: {len(_ratio_of)} matrices, "
+                  f"target ratio {_ref.get('target_achieved_compression_ratio')}")
+            torch.manual_seed(a.seed)
+            _parent_of = {}
+            for _pname, _pmod in model.named_modules():
+                for _cname, _cmod in _pmod.named_children():
+                    _parent_of[id(_cmod)] = (_pmod, _cname)
+            _applied = _dense = 0
+            for _name, _mod in list(model.named_modules()):
+                if not isinstance(_mod, torch.nn.Linear) or _name not in _ratio_of:
+                    continue
+                _r = _ratio_of[_name]
+                if _r >= 1.0:
+                    _dense += 1
+                    continue
+                _par, _attr = _parent_of[id(_mod)]
+                _svd = SVDLinear.from_linear(
+                    _mod, param_ratio=_r, alpha=args.alpha, act_aware=args.act_aware,
+                    sigma_fuse=args.sigma_fuse, rank_align=args.rank_align)
+                setattr(_par, _attr, _svd)
+                _mod.to("cpu")
+                _applied += 1
+            print(f"[rank-plan] applied {_applied} decompositions, {_dense} kept dense")
+        else:
+            _sens_fn = (calib_sensitivity_stable_rank
+                        if a.sensitivity_metric == "stable_rank" else calib_sensitivity_ppl)
+            sensitivity = _sens_fn(model, calib, args, use_cache=False)
+            binary_search_truncation_rank(model, sensitivity, calib, args)
 
     compress_s = time.perf_counter() - t0
     after = count_parameters(model)
