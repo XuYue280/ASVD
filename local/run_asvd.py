@@ -19,7 +19,9 @@ _REPO = os.path.dirname(_HERE)          # <checkout>/local/..  ->  <checkout>
 sys.path.insert(0, _REPO)
 sys.path.insert(0, _HERE)
 
-from shared_eval import evaluate_all, count_parameters
+from shared_eval import (evaluate_all, count_parameters, arks_fields,
+                         PeakMemory, dense_cache_meta,
+                         load_dense_cache, save_dense_cache)
 
 
 class _Shield(torch.nn.Module):
@@ -60,6 +62,11 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         a.model, device_map="auto", torch_dtype=torch.float16, trust_remote_code=True
     )
+    # ARKS bench-record timings / peak memory (shared_eval.PeakMemory)
+    _t_wall0 = time.perf_counter()
+    _mem = PeakMemory(); _mem.__enter__()
+    _t_load = time.perf_counter() - _t_wall0
+
     before = count_parameters(model)
     t0 = time.perf_counter()
 
@@ -166,6 +173,10 @@ def main():
 
     compress_s = time.perf_counter() - t0
     after = count_parameters(model)
+    # ARKS: layers_evaluated / matrices_evaluated (bench record :1043-1044)
+    _n_layers = int(getattr(model.config, "num_hidden_layers", 0) or 0)
+    _n_matrices = sum(1 for _n, _m in model.named_modules()
+                      if isinstance(_m, torch.nn.Linear) and "lm_head" not in _n)
 
     # Recipe cross-checks: the whole-model achieved ratio over the 72 target
     # matrices, and how many of them the binary search left fully dense.
@@ -190,7 +201,11 @@ def main():
     print(f"[check] target matrices={n_target}  kept fully dense={dense_kept}  "
           f"achieved ratio={achieved:.4f}" if achieved else "[check] n/a", flush=True)
 
+    _t_eval0 = time.perf_counter()
+
     res = evaluate_all(model, tok, device="cuda")
+
+    _t_eval1 = time.perf_counter()
 
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
     payload = {
@@ -208,6 +223,27 @@ def main():
         "ppl": {c: v["ppl"] for c, v in res.items()},
         "ppl_tokens": {c: v["ppl_tokens"] for c, v in res.items()},
     }
+    # --- ARKS-compatible fields (see shared_eval.arks_fields) ---
+    _runs_root = os.path.dirname(a.out)
+    if a.dense:
+        save_dense_cache(_runs_root, res, inference_seconds=_t_eval1 - _t_eval0)
+    _dense_res = load_dense_cache(_runs_root)
+    payload.update(arks_fields(
+        method="asvd", model=a.model, rho=(None if a.dense else a.rho),
+        res=res, params_before=before, params_after=after,
+        dense=a.dense, seed=a.seed, dense_res=_dense_res,
+        timings={
+            "inference_seconds": _t_eval1 - _t_eval0,
+            "metric_seconds": _t_eval1 - _t_eval0,
+            "model_load_seconds": _t_load,
+            "reconstruction_seconds": compress_s if not a.dense else 0.0,
+            "artifact_load_seconds": 0.0,
+            "dense_inference_seconds": (_dense_res.get("_meta") or {}).get("dense_inference_seconds"),
+            "total_seconds": time.perf_counter() - _t_wall0,
+        },
+        peak_memory=_mem.fields(),
+        layers_evaluated=_n_layers, matrices_evaluated=_n_matrices))
+
     with open(a.out, "w") as fh:
         json.dump(payload, fh, indent=2)
     print("\n" + json.dumps(payload["ppl"], indent=2))
