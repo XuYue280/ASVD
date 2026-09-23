@@ -232,40 +232,147 @@ def rollup(outer, children) -> dict:
     return fields
 
 
-def environment() -> dict:
-    """What the measurements above were taken on.
+class _RolledUp:
+    """A `total` Phase whose CUDA peaks are the max over its children.
 
+    arks_aligned() needs the corrected whole-run peaks, and `rollup` returns a
+    plain dict rather than something with .fields(). This adapter gives it the
+    Phase-like surface without duplicating the correction logic.
+    """
+
+    def __init__(self, outer, children):
+        self.name = outer.name
+        self._fields = rollup(outer, children)
+
+    def fields(self) -> dict:
+        return dict(self._fields)
+
+
+def environment() -> dict:
+    """The machine the measurements were taken on.
+
+    Key names mirror ARKS's arks_runs/<model>/seed_0/hardware.json exactly, so
+    the two files can be compared field by field without a translation table.
     A runtime or a peak-memory figure is meaningless without this: the same job
     on a different card, driver or torch build is a different measurement.
     """
     import platform
 
     info = {
-        "host": platform.node(),
+        "platform": platform.platform(),
         "python": platform.python_version(),
         "torch": torch.__version__,
         "torch_cuda": torch.version.cuda,
-        "cpu_count": os.cpu_count(),
-        # The cgroup/affinity-aware count -- on a scheduler this is what the job
-        # actually got, which os.cpu_count() does not report.
-        "cpu_affinity": len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None,
+        "cpu_logical": os.cpu_count(),
+        # What the job actually got, which os.cpu_count() does not report under
+        # a scheduler or a container. ARKS calls this cpu_usable.
+        "cpu_usable": (len(os.sched_getaffinity(0))
+                       if hasattr(os, "sched_getaffinity") else os.cpu_count()),
+        "cuda_available": torch.cuda.is_available(),
     }
-    _dev = _usable_devices()
-    info["gpu_count"] = len(_dev)
-    try:
-        info["gpu_names"] = [torch.cuda.get_device_name(d) for d in _dev]
-        info["gpu_total_memory_mb"] = [
-            torch.cuda.get_device_properties(d).total_memory / 1024**2 for d in _dev]
-    except Exception:
-        info["gpu_names"] = []
-        info["gpu_total_memory_mb"] = []
     try:
         import transformers
         info["transformers"] = transformers.__version__
     except Exception:
         pass
-    # Present only under Slurm; harmless (and absent) on a local box.
+
+    # Host RAM, from /proc/meminfo -- ARKS uses psutil, but the two read the
+    # same kernel counters and this keeps the dependency list unchanged.
+    try:
+        mem = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            k, _, v = line.partition(":")
+            mem[k] = int(v.split()[0]) * 1024          # kB -> bytes
+        info["ram_total_bytes"] = mem.get("MemTotal")
+        info["ram_available_bytes"] = mem.get("MemAvailable")
+        info["swap_total_bytes"] = mem.get("SwapTotal")
+    except Exception:
+        info["ram_total_bytes"] = info["ram_available_bytes"] = None
+        info["swap_total_bytes"] = None
+
+    gpus = []
+    for d in _usable_devices():
+        try:
+            pr = torch.cuda.get_device_properties(d)
+            free, total = torch.cuda.mem_get_info(d)
+            gpus.append({
+                "index": d,
+                "name": pr.name,
+                "vram_total_bytes": total,
+                "vram_free_bytes": free,
+                "compute_capability": f"{pr.major}.{pr.minor}",
+            })
+        except Exception:
+            pass
+    info["gpus"] = gpus
+    info["gpu_count"] = len(gpus)
+
+    # Present only under Slurm; absent (and harmless) on a local box.
     for k in ("SLURM_JOB_ID", "SLURM_ARRAY_TASK_ID", "SLURM_CPUS_PER_TASK"):
         if os.environ.get(k):
             info[k.lower()] = os.environ[k]
     return info
+
+
+def arks_aligned(load, compress, evaluate, total, params_before, params_after) -> dict:
+    """Re-express the phase probes under ARKS's own field names.
+
+    ARKS splits the work across two scripts and so across two records; the
+    baselines do both in one process. The mapping is therefore by PHASE, not by
+    process:
+
+        ARKS compression record          <-  the `compress` phase
+          wallclock_seconds                  compress_seconds
+          peak_cpu_rss_mb                    compress peak RSS
+          (ARKS has NO cuda fields here -- its compression runs on CPU workers,
+           so the baselines' compress-phase CUDA peaks have no ARKS counterpart
+           and are reported as extra rather than as a matching field.)
+
+        ARKS inference record            <-  the `eval` phase
+          model_load_seconds                 model_load_seconds
+          inference_seconds                  eval_seconds
+          total_seconds                      total_seconds (whole process)
+          peak_cpu_rss_mb / peak_cuda_*      eval-phase peaks
+
+    The four fields named at top level -- peak_cuda_allocated_mb,
+    peak_cuda_reserved_mb, peak_cpu_rss_mb, peak_cpu_rss_increase_mb -- are the
+    WHOLE-RUN peaks (max over every phase), because that is the figure that
+    decides what hardware a run needs. The phase-scoped values sit alongside
+    them under `compression` and `inference`.
+
+    Storage is derived, not measured: a baseline's compressed model is a plain
+    fp16 checkpoint, so its size is exactly 2 bytes per surviving parameter.
+    `total_model_bits_per_parameter` divides by the DENSE parameter count, which
+    is how ARKS defines it (verified on opt-6.7b: 7618.568 MB over 6.658e9 dense
+    params gives 9.598, matching its recorded value).
+    """
+    t = total.fields()
+    storage_mb = params_after["total_params"] * 2 / 1024**2
+    bits_per_param = (storage_mb * 1024**2 * 8) / params_before["total_params"]
+    return {
+        # --- the four the comparison hinges on: whole-run peaks ---
+        "peak_cuda_allocated_mb": t["total_peak_cuda_allocated_mb"],
+        "peak_cuda_reserved_mb": t["total_peak_cuda_reserved_mb"],
+        "peak_cpu_rss_mb": t["total_peak_cpu_rss_mb"],
+        "peak_cpu_rss_increase_mb": t["total_peak_cpu_rss_increase_mb"],
+        "total_seconds": t["total_seconds"],
+        "total_model_storage_mb": storage_mb,
+        "total_model_bits_per_parameter": bits_per_param,
+        "compression": {
+            "wallclock_seconds": compress.fields()["compress_seconds"],
+            "peak_cpu_rss_mb": compress.fields()["compress_peak_cpu_rss_mb"],
+            "peak_cpu_rss_increase_mb": compress.fields()["compress_peak_cpu_rss_increase_mb"],
+            "peak_cuda_allocated_mb": compress.fields()["compress_peak_cuda_allocated_mb"],
+            "peak_cuda_reserved_mb": compress.fields()["compress_peak_cuda_reserved_mb"],
+            "workers": 1,
+            "threads_per_worker": int(os.environ.get("OMP_NUM_THREADS", 0)) or None,
+        },
+        "inference": {
+            "model_load_seconds": load.fields()["model_load_seconds"],
+            "inference_seconds": evaluate.fields()["eval_seconds"],
+            "peak_cpu_rss_mb": evaluate.fields()["eval_peak_cpu_rss_mb"],
+            "peak_cpu_rss_increase_mb": evaluate.fields()["eval_peak_cpu_rss_increase_mb"],
+            "peak_cuda_allocated_mb": evaluate.fields()["eval_peak_cuda_allocated_mb"],
+            "peak_cuda_reserved_mb": evaluate.fields()["eval_peak_cuda_reserved_mb"],
+        },
+    }

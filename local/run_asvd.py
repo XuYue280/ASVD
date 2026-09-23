@@ -21,7 +21,7 @@ sys.path.insert(0, _HERE)
 from shared_eval import evaluate_all, count_parameters
 # Timing + peak-memory probes, defined identically to the ARKS instrumentation
 # so the two sides are comparable. Measurement only; see telemetry.py.
-from telemetry import Phase, environment, rollup
+from telemetry import Phase, environment, rollup, arks_aligned, _RolledUp
 
 
 class _Shield(torch.nn.Module):
@@ -167,6 +167,11 @@ def main():
         # peak. See telemetry.rollup.
         "telemetry": {**_load.fields(), **_compress.fields(), **_eval.fields(),
                       **rollup(_total, (_load, _compress, _eval))},
+        # The same measurements under ARKS's own field names, so the two sides
+        # join without a translation table. See telemetry.arks_aligned.
+        "arks_aligned": arks_aligned(_load, _compress, _eval,
+                                     _RolledUp(_total, (_load, _compress, _eval)),
+                                     before, after),
         "per_corpus_cost": {c: {k: v for k, v in d.items()
                                 if k not in ("ppl", "ppl_tokens")}
                             for c, d in res.items()},
