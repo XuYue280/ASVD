@@ -44,3 +44,32 @@ local/logs/
 *.bak
 *.orig
 *.pre_fp16
+
+# ---------------------------------------------------------------------------
+# Generated data, results, and plots. Nothing a run produces belongs in git:
+# the result JSONs are re-derivable from run_local.sh, the artefacts are
+# GB-scale, and committing them makes every new number look like a source
+# change. Result JSONs are caught by the local/runs/ directory rule, never by
+# a *.json pattern -- that would also swallow config files.
+# ---------------------------------------------------------------------------
+local/runs/
+local/logs/
+local/plots/
+local/.spill/
+results/
+plots/
+figures/
+
+*.svg
+*.jsonl
+*.npz
+*.npy
+*.pkl
+*.safetensors
+
+# A core dump holds whatever was in memory, including any HF_TOKEN.
+core.*
+*.core
+
+# throwaway probes written while debugging; they carry absolute paths
+.probe_*.py
